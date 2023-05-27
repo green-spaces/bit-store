@@ -15,6 +15,7 @@ pub trait BitStoreBaseOps:
     + Not<Output = Self>
     + Shl<Output = Self>
     + Shr<Output = Self>
+    + PartialEq
 {
 }
 
@@ -26,6 +27,8 @@ pub trait Ones: Shr<Output = Self> + Sized {
 }
 
 /// Implementation assumes T has at most 256 bits
+///
+///
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BitStore<T: Sized, const BITS: u8>(T);
 
@@ -49,25 +52,49 @@ where
     ///
     /// Applies mask to input value to prevent the other bits from being polluted
     pub fn set(&mut self, index: u8, value: T) {
-        let maked_value = (value & Self::mask(0)) << T::from(index * BITS);
+        let masked_value = (value & Self::mask(0)) << T::from(index * BITS);
         self.clear(index);
-        self.0 |= maked_value;
+        self.0 |= masked_value;
     }
 
+    /// Toggles all of the bits in the index
     pub fn toggle(&mut self, index: u8) {
         let mask = Self::mask(index);
         self.0 ^= mask;
     }
 
+    /// Sets all the bits to zero in the index position
     pub fn clear(&mut self, index: u8) {
         let mask = !Self::mask(index);
         self.0 &= mask;
     }
 
-    pub fn increment(&mut self, index: u8) {
+    /// Increments the position by one
+    ///
+    /// Returns the new value at index t
+    ///
+    /// Overflows do not result in a state change
+    pub fn increment(&mut self, index: u8) -> Option<T> {
+        let mut value = self.get(index);
+        value += T::one();
+        let masked_value = value.clone() & Self::mask(index);
+
+        if masked_value != value {
+            return None;
+        }
+
+        self.set(index, value);
+        Some(masked_value)
+    }
+
+    /// Increments the position by one
+    ///
+    /// Overflows will pollute the next index
+    pub fn increment_unchecked(&mut self, index: u8) {
         self.0 += T::one() << T::from(index * BITS);
     }
 
+    /// Generates the mask to interact with the bucket
     fn mask(index: u8) -> T {
         let size_of_t = 8 * std::mem::size_of::<T>() as u8;
         (T::all_ones() >> T::from(size_of_t - BITS)) << T::from(index * BITS)
