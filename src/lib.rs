@@ -1,89 +1,80 @@
 use std::fmt::Debug;
-use std::ops::{Add, AddAssign, BitAnd, BitAndAssign, BitOrAssign, Not, Shl, Shr};
+use std::ops::{Add, AddAssign, BitAnd, BitAndAssign, BitOrAssign, BitXorAssign, Not, Shl, Shr};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BitStore<T: Sized, const BITS: usize>(T);
+/// The operations a storage type needs to support for use with [BitStore]
+pub trait BitStoreBaseOps:
+    Sized
+    + Default
+    + Ones
+    + Add<Output = Self>
+    + AddAssign
+    + BitAnd<Output = Self>
+    + BitAndAssign
+    + BitOrAssign
+    + BitXorAssign
+    + Not<Output = Self>
+    + Shl<Output = Self>
+    + Shr<Output = Self>
+{
+}
 
-impl<T: Default, const BITS: usize> BitStore<T, BITS> {
+/// Returns an object with all bits set to one
+pub trait Ones: Shr<Output = Self> + Sized {
+    fn all_ones() -> Self;
+
+    fn one() -> Self;
+}
+
+/// Implementation assumes T has at most 256 bits
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BitStore<T: Sized, const BITS: u8>(T);
+
+impl<T, const BITS: u8> BitStore<T, BITS>
+where
+    T: BitStoreBaseOps + Clone + From<u8>,
+{
     pub fn new() -> BitStore<T, BITS> {
         BitStore(T::default())
     }
-}
 
-impl<T, const BITS: usize> BitStore<T, BITS>
-where
-    T: Shl<Output = T> + TryFrom<usize> + AddAssign,
-    <T as TryFrom<usize>>::Error: Debug,
-{
-    pub fn increment(&mut self, index: usize) {
-        self.0 += T::try_from(1_usize << index * BITS).expect("index * BITS exceeded sizeof<T>");
-    }
-}
-
-impl<T, const BITS: usize> BitStore<T, BITS>
-where
-    T: Shl<Output = T> + Shr<Output = T> + BitAnd<Output = T> + Copy,
-    T: TryFrom<usize>,
-    <T as TryFrom<usize>>::Error: Debug,
-{
     /// Gets the value stored in the index position
     ///
     /// The value is shifted to the least significant bit
-    pub fn get(&self, index: usize) -> T {
+    pub fn get(&self, index: u8) -> T {
         let mask = Self::mask(index);
-        (self.0 & mask) >> T::try_from(index * BITS).unwrap()
+        (self.0.clone() & mask) >> T::from(index * BITS)
     }
 
-    pub fn toggle(&mut self, index: usize) {
-        todo!()
-    }
-}
-
-impl<T, const BITS: usize> BitStore<T, BITS>
-where
-    T: Shl<Output = T>
-        + Shr<Output = T>
-        + BitAnd<Output = T>
-        + Not<Output = T>
-        + BitOrAssign
-        + BitAndAssign
-        + Copy,
-    T: TryFrom<usize>,
-    <T as TryFrom<usize>>::Error: Debug,
-{
     /// Assumes value uses the lowest BITS.
     ///
     /// Applies mask to input value to prevent the other bits from being polluted
-    pub fn set(&mut self, index: usize, value: T) {
-        let maked_value = (value & Self::mask(0)) << T::try_from(index * BITS).unwrap();
+    pub fn set(&mut self, index: u8, value: T) {
+        let maked_value = (value & Self::mask(0)) << T::from(index * BITS);
         self.clear(index);
         self.0 |= maked_value;
     }
-}
 
-impl<T, const BITS: usize> BitStore<T, BITS>
-where
-    T: BitAndAssign + Not<Output = T>,
-    T: TryFrom<usize>,
-    <T as TryFrom<usize>>::Error: Debug,
-{
-    pub fn clear(&mut self, index: usize) {
+    pub fn toggle(&mut self, index: u8) {
+        let mask = Self::mask(index);
+        self.0 ^= mask;
+    }
+
+    pub fn clear(&mut self, index: u8) {
         let mask = !Self::mask(index);
         self.0 &= mask;
     }
-}
 
-impl<T, const BITS: usize> BitStore<T, BITS>
-where
-    T: TryFrom<usize>,
-    <T as TryFrom<usize>>::Error: Debug,
-{
-    fn mask(index: usize) -> T {
-        T::try_from((usize::MAX >> (64 - BITS)) << index * BITS).unwrap()
+    pub fn increment(&mut self, index: u8) {
+        self.0 += T::one() << T::from(index * BITS);
+    }
+
+    fn mask(index: u8) -> T {
+        let size_of_t = 8 * std::mem::size_of::<T>() as u8;
+        (T::all_ones() >> T::from(size_of_t - BITS)) << T::from(index * BITS)
     }
 }
 
-impl<T: Add<Output = T>, const BITS: usize> Add for BitStore<T, BITS> {
+impl<T: Add<Output = T>, const BITS: u8> Add for BitStore<T, BITS> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -91,11 +82,32 @@ impl<T: Add<Output = T>, const BITS: usize> Add for BitStore<T, BITS> {
     }
 }
 
-impl<T: AddAssign, const BITS: usize> AddAssign for BitStore<T, BITS> {
+impl<T: AddAssign, const BITS: u8> AddAssign for BitStore<T, BITS> {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
 }
+
+impl BitStoreBaseOps for u8 {}
+impl BitStoreBaseOps for u16 {}
+impl BitStoreBaseOps for u32 {}
+impl BitStoreBaseOps for u64 {}
+
+macro_rules! uints_for_bitstore {
+   ( $($t: ty), *) => {
+        $(impl Ones for $t {
+            fn all_ones() -> Self {
+                Self::MAX
+            }
+
+            fn one() -> Self {
+                1
+            }
+        })*
+    }
+}
+
+uints_for_bitstore! { u8, u16, u32, u64 }
 
 #[cfg(test)]
 mod tests {
